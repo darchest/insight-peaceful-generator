@@ -3,5 +3,4 @@ plugins {
 }
 rootProject.name = "insight-peaceful-generator"
 
-include("insight")
-project(":insight").projectDir = file("../insight")
+
