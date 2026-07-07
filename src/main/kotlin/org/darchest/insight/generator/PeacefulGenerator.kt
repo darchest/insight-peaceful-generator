@@ -6,10 +6,7 @@
 package org.darchest.insight.generator
 
 import mu.KotlinLogging
-import org.darchest.insight.Index
-import org.darchest.insight.SqlTypeConverter
-import org.darchest.insight.Table
-import org.darchest.insight.TableColumn
+import org.darchest.insight.*
 import org.darchest.insight.ddl.CreateTable
 import java.sql.Connection
 import java.sql.DatabaseMetaData
@@ -149,13 +146,15 @@ class PeacefulGenerator {
 
     private suspend fun generateNewColumn(conn: Connection, targetSchema: Schema, table: Table, column: TableColumn<*, *>) {
         val builder = StringBuilder()
-        builder.append("ALTER TABLE ", table.sqlName, " ADD COLUMN ", column.name, ' ', column.getSqlStringType())
+        builder.append("ALTER TABLE ", table.sqlName, " ADD COLUMN ")
+        table.vendor().writeSqlColumnName(column, builder)
+        builder.append(' ', column.getSqlStringType())
         column.length?.apply { builder.append("(", this, ")") }
         builder.append(" NOT NULL")
         val def = column.default()
         if (def != null) {
             builder.append(" DEFAULT ")
-            builder.append(SqlTypeConverter.javaToSql(def.javaClass, def.sqlClass, def.getValue()))
+            builder.append(SqlTypeConvertersRegistry.javaToSql(def.javaClass, def.sqlClass, def.getValue()))
         }
         logger.debug { builder }
         conn.prepareStatement(builder.toString()).use { statement ->
