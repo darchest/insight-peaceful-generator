@@ -6,6 +6,7 @@
 package org.darchest.insight.generator
 
 import mu.KotlinLogging
+import org.darchest.insight.Vendor
 import java.sql.Connection
 
 class PeacefulGenerator {
@@ -14,7 +15,9 @@ class PeacefulGenerator {
     private val schemaAnalyzer = RealSchemaAnalyzer()
     private val planBuilder = ModificationPlanBuilder()
 
-    suspend fun generate(conn: Connection, targetSchema: SchemaDescriptor) {
+    suspend fun generate(conn: Connection, targetSchema: SchemaDescriptor, vendor: Vendor) {
+        SchemaIdentifierValidator.validate(targetSchema, vendor)
+
         val current = schemaAnalyzer.analyze(conn, targetSchema.name)
         val plan = planBuilder.build(current, targetSchema)
         logPlan(targetSchema.name, plan)
