@@ -15,6 +15,7 @@ class ModificationPlanBuilder {
         appendAddColumns(modifications, currentTables, target)
         appendAlterColumnSizes(modifications, currentTables, target)
         appendAddIndexes(modifications, currentTables, target)
+        appendAddForeignKeys(modifications, currentTables, target)
 
         return ModificationPlan(modifications)
     }
@@ -128,5 +129,50 @@ class ModificationPlanBuilder {
                         )
                     }
             }
+    }
+
+    private fun appendAddForeignKeys(
+        modifications: MutableList<SchemaModification>,
+        currentTables: Map<String, TableDescriptor>,
+        target: SchemaDescriptor,
+    ) {
+        target.tables
+            .sortedBy { it.name }
+            .forEach { targetTable ->
+                val currentForeignKeys = currentTables[targetTable.name]?.foreignKeys ?: emptyList()
+                targetTable.foreignKeys.forEach { foreignKey ->
+                    if (currentForeignKeys.any { matchesForeignKey(it, foreignKey) })
+                        return@forEach
+                    val fkLabel = foreignKey.name ?: "без имени"
+                    modifications.add(
+                        AddForeignKeyModification(
+                            tableName = targetTable.name,
+                            foreignKey = foreignKey,
+                            description = "Добавить внешний ключ $fkLabel на ${targetTable.name} → ${foreignKey.referencedTable}",
+                            sql = SchemaDdl.addForeignKeySql(targetTable.name, foreignKey),
+                        )
+                    )
+                }
+            }
+    }
+
+    private fun matchesForeignKey(current: ForeignKeyDescriptor, target: ForeignKeyDescriptor): Boolean {
+        val currentName = current.name
+        val targetName = target.name
+        if (currentName != null && targetName != null)
+            return currentName == targetName
+
+        if (current.referencedSchema != target.referencedSchema)
+            return false
+        if (current.referencedTable != target.referencedTable)
+            return false
+
+        val currentPairs = current.columns
+            .sortedBy { it.sequence }
+            .map { it.column to it.referencedColumn }
+        val targetPairs = target.columns
+            .sortedBy { it.sequence }
+            .map { it.column to it.referencedColumn }
+        return currentPairs == targetPairs
     }
 }

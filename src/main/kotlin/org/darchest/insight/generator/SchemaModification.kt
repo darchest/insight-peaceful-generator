@@ -10,6 +10,7 @@ enum class ModificationKind {
     ADD_COLUMN,
     ADD_INDEX,
     ALTER_COLUMN_SIZE,
+    ADD_FOREIGN_KEY,
 }
 
 sealed interface SchemaModification {
@@ -54,6 +55,15 @@ data class AlterColumnSizeModification(
     override val sql: String,
 ) : SchemaModification {
     override val kind = ModificationKind.ALTER_COLUMN_SIZE
+}
+
+data class AddForeignKeyModification(
+    val tableName: String,
+    val foreignKey: ForeignKeyDescriptor,
+    override val description: String,
+    override val sql: String,
+) : SchemaModification {
+    override val kind = ModificationKind.ADD_FOREIGN_KEY
 }
 
 data class ModificationPlan(

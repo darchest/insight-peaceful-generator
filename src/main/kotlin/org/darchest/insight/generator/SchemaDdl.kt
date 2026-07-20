@@ -23,10 +23,6 @@ object SchemaDdl {
             builder.append(",\n\t")
             appendPrimaryKey(builder, primaryKey)
         }
-        table.foreignKeys.forEach { foreignKey ->
-            builder.append(",\n\t")
-            appendForeignKey(builder, foreignKey)
-        }
         builder.append("\n);")
         return builder.toString()
     }
@@ -53,6 +49,16 @@ object SchemaDdl {
 
     fun alterColumnSizeSql(tableName: String, columnName: String, typeName: String, newSize: Int): String {
         return "ALTER TABLE $tableName ALTER COLUMN $columnName TYPE $typeName($newSize)"
+    }
+
+    fun addForeignKeySql(tableName: String, foreignKey: ForeignKeyDescriptor): String {
+        val builder = StringBuilder()
+        builder.append("ALTER TABLE ", tableName, " ADD ")
+        foreignKey.name?.let { name ->
+            builder.append("CONSTRAINT ", name, " ")
+        }
+        appendForeignKey(builder, foreignKey)
+        return builder.toString()
     }
 
     private fun appendColumnDefinition(builder: StringBuilder, column: ColumnDescriptor) {
