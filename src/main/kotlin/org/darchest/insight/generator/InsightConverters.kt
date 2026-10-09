@@ -10,7 +10,7 @@ import java.sql.DatabaseMetaData
 import java.sql.Types
 
 suspend fun TableColumn<*, *>.toDescriptor(ordinalPosition: Int, vendor: Vendor): ColumnDescriptor {
-    val def = default()
+    val def = default?.invoke()
     return ColumnDescriptor(
         name = name,
         ordinalPosition = ordinalPosition,

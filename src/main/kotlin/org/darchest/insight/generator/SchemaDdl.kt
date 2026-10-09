@@ -12,7 +12,7 @@ object SchemaDdl {
             throw IllegalArgumentException("No columns in table ${table.name}")
 
         val builder = StringBuilder()
-        builder.append("CREATE TABLE IF NOT EXISTS ", table.name, "\n(\n\t")
+        builder.append("CREATE TABLE IF NOT EXISTS \"", table.name, "\"\n(\n\t")
         val columnIter = table.columns.iterator()
         appendColumnDefinition(builder, columnIter.next())
         while (columnIter.hasNext()) {
@@ -29,7 +29,7 @@ object SchemaDdl {
 
     fun addColumnSql(tableName: String, column: ColumnDescriptor): String {
         val builder = StringBuilder()
-        builder.append("ALTER TABLE ", tableName, " ADD COLUMN ")
+        builder.append("ALTER TABLE \"", tableName, "\" ADD COLUMN ")
         appendColumnDefinition(builder, column)
         return builder.toString()
     }
@@ -40,29 +40,29 @@ object SchemaDdl {
             builder.append("CREATE UNIQUE INDEX IF NOT EXISTS ")
         else
             builder.append("CREATE INDEX IF NOT EXISTS ")
-        builder.append(index.name, " ON ", tableName, " (")
+        builder.append("\"", index.name, "\" ON \"", tableName, "\" (")
         val columns = index.columns.sortedBy { it.ordinalPosition }
-        builder.append(columns.joinToString(", ") { it.name })
+        builder.append(columns.joinToString(", ") { "\"${it.name}\"" })
         builder.append(");")
         return builder.toString()
     }
 
     fun alterColumnSizeSql(tableName: String, columnName: String, typeName: String, newSize: Int): String {
-        return "ALTER TABLE $tableName ALTER COLUMN $columnName TYPE $typeName($newSize)"
+        return "ALTER TABLE \"$tableName\" ALTER COLUMN \"$columnName\" TYPE $typeName($newSize)"
     }
 
     fun addForeignKeySql(tableName: String, foreignKey: ForeignKeyDescriptor): String {
         val builder = StringBuilder()
-        builder.append("ALTER TABLE ", tableName, " ADD ")
+        builder.append("ALTER TABLE \"", tableName, "\" ADD ")
         foreignKey.name?.let { name ->
-            builder.append("CONSTRAINT ", name, " ")
+            builder.append("CONSTRAINT \"", name, "\" ")
         }
         appendForeignKey(builder, foreignKey)
         return builder.toString()
     }
 
     private fun appendColumnDefinition(builder: StringBuilder, column: ColumnDescriptor) {
-        builder.append(column.name, ' ', column.typeName)
+        builder.append('"', column.name, "\" ", column.typeName)
         column.columnSize?.apply { builder.append("(", this, ")") }
         if (!column.nullable)
             builder.append(" NOT NULL")
