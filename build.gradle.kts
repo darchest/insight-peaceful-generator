@@ -14,6 +14,7 @@ repositories {
 
 dependencies {
     implementation("org.darchest:insight:1.0-SNAPSHOT")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
 
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.0")
 
