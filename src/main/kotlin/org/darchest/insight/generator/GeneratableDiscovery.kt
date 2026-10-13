@@ -2,9 +2,6 @@ package org.darchest.insight.generator
 
 import org.darchest.insight.Table
 import java.lang.reflect.Modifier
-import java.lang.reflect.ParameterizedType
-import java.lang.reflect.Type
-import java.lang.reflect.TypeVariable
 
 internal class GeneratableDiscovery(private val loader: ClassLoader) {
     private val classes by lazy { GenerationClasspath.scan(loader) }
@@ -40,13 +37,11 @@ internal class GeneratableDiscovery(private val loader: ClassLoader) {
             val type = Class.forName(name, false, loader)
             if (type.isInterface || Modifier.isAbstract(type.modifiers) || !Modifier.isPublic(type.modifiers) ||
                 type.isAnonymousClass || type.isLocalClass || type.isSynthetic) return@mapNotNull null
-            val tableType = recordsTableType(type) ?: type.getMethod("tableFactory").returnType
+            val tableType = RecordsTable.type(type) ?: return@mapNotNull null
             if (tableType !in targets) return@mapNotNull null
+            RecordsTable.constructor(type)
             val source = instance(type) as? RecordsSource<*> ?: return@mapNotNull null
-            val table = source.tableFactory()
-            val target = targets[table.javaClass] ?: return@mapNotNull null
-            if (table.schemaName != target.schemaName || table.sqlName != target.sqlName) return@mapNotNull null
-            table.javaClass to source
+            tableType to source
         }.groupBy({ it.first }, { it.second })
 
         return tables.mapNotNull { table ->
@@ -64,31 +59,6 @@ internal class GeneratableDiscovery(private val loader: ClassLoader) {
                 { distance(it.javaClass, owner) }, { it.javaClass.name },
             ))
         }
-    }
-
-    private fun recordsTableType(type: Class<*>): Class<*>? {
-        fun resolve(value: Type, bindings: Map<TypeVariable<*>, Type>): Type {
-            if (value !is TypeVariable<*>) return value
-            val bound = bindings[value] ?: return value
-            return if (bound == value) value else resolve(bound, bindings)
-        }
-        fun walk(value: Type, bindings: Map<TypeVariable<*>, Type>): Class<*>? {
-            val raw: Class<*>
-            val resolved: Map<TypeVariable<*>, Type>
-            when (value) {
-                is ParameterizedType -> {
-                    raw = value.rawType as? Class<*> ?: return null
-                    resolved = bindings + raw.typeParameters.zip(value.actualTypeArguments.map { resolve(it, bindings) })
-                }
-                is Class<*> -> { raw = value; resolved = bindings }
-                else -> return null
-            }
-            if (raw == RecordsSource::class.java)
-                return resolve(raw.typeParameters.single(), resolved) as? Class<*>
-            for (parent in raw.genericInterfaces) walk(parent, resolved)?.let { return it }
-            return raw.genericSuperclass?.let { walk(it, resolved) }
-        }
-        return walk(type, emptyMap())
     }
 
     private fun instance(type: Class<*>): Any? {

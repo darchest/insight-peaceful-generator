@@ -12,7 +12,8 @@ internal object RecordsGenerator {
     suspend fun generate(conn: Connection, sources: List<RecordsSource<*>>, vendor: Vendor) =
         withContext(ConnectionManager.localConnection.asContextElement(conn)) {
             for (source in sources) {
-                for (record in source.records()) upsert(conn, source.tableFactory(), record, vendor)
+                val constructor = RecordsTable.constructor(source.javaClass)
+                for (record in source.records()) upsert(conn, constructor.newInstance(), record, vendor)
             }
         }
 
