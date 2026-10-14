@@ -3,4 +3,6 @@ plugins {
 }
 rootProject.name = "insight-peaceful-generator"
 
+include("insight-peaceful-generator-ksp")
+
 
