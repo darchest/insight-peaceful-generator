@@ -14,8 +14,10 @@ import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSDeclaration
 import com.google.devtools.ksp.symbol.KSFile
+import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.KSTypeAlias
 import com.google.devtools.ksp.symbol.Modifier
+import com.google.devtools.ksp.symbol.Variance
 import com.google.devtools.ksp.symbol.Visibility
 import java.io.OutputStreamWriter
 
@@ -25,14 +27,17 @@ class GeneratableProcessor(
     private val logger: KSPLogger,
     private val options: Map<String, String>,
 ) : SymbolProcessor {
-    private data class TableEntry(val name: String, val expression: String, val pack: String)
+    private data class TableEntry(val name: String, val singleton: Boolean, val defaultArguments: Boolean, val pack: String)
     private data class SourceEntry(
         val name: String,
-        val expression: String,
+        val singleton: Boolean,
+        val defaultArguments: Boolean,
         val table: String,
         val owner: String,
         val ownerAncestors: Set<String>,
         val distance: Int,
+        val generic: Boolean,
+        val factoryParameter: String?,
     )
 
     private class UnresolvedSupertype : RuntimeException()
@@ -63,16 +68,18 @@ class GeneratableProcessor(
                 continue
             }
             val pack = annotation.arguments.firstOrNull { it.name?.asString() == "genPack" }?.value as? String ?: "default"
-            tableEntries += TableEntry(name, expression(declaration), pack)
+            tableEntries += TableEntry(name, declaration.classKind == ClassKind.OBJECT, needsDefaultArguments(declaration), pack)
         }
         tables = tableEntries.sortedBy { it.name }
-        val tableNames = tables.map { it.name }.toSet()
+        val tableTypes = tables.associate { entry ->
+            entry.name to declarations.single { it.qualifiedName?.asString() == entry.name }.asStarProjectedType()
+        }
         val recordsMethod = resolver.getClassDeclarationByName(resolver.getKSNameFromString(RECORDS_SOURCE))
             ?.getDeclaredFunctions()?.single { it.simpleName.asString() == "records" && it.parameters.isEmpty() }
         val sourceEntries = mutableListOf<SourceEntry>()
         if (recordsMethod != null) {
             for (declaration in declarations) {
-                if (!canInstantiate(declaration)) continue
+                if (!isAccessibleConcrete(declaration) || declaration.typeParameters.size > 1) continue
                 val name = declaration.qualifiedName?.asString() ?: continue
                 val ancestors = try {
                     hierarchy(declaration)
@@ -81,24 +88,37 @@ class GeneratableProcessor(
                     continue
                 }
                 if (RECORDS_SOURCE !in ancestors) continue
-                // asMemberOf substitutes T through generic superclass and interface chains.
-                val recordType = recordsMethod.asMemberOf(declaration.asStarProjectedType()).returnType
-                    ?.arguments?.singleOrNull()?.type?.resolve() ?: continue
-                if (recordType.isError) {
+                val generic = declaration.typeParameters.isNotEmpty()
+                val bounds = declaration.typeParameters.flatMap { parameter -> parameter.bounds.map { it.resolve() }.toList() }
+                if (bounds.any { it.isError }) {
                     deferred += declaration
                     continue
                 }
-                val tableDeclaration = recordType.declaration.let {
-                    if (it is KSTypeAlias) it.findActualType() else it
-                }
-                val tableName = tableDeclaration.qualifiedName?.asString() ?: continue
-                if (tableName !in tableNames) continue
                 val owner = recordsOwner(declaration) ?: continue
                 val ownerName = owner.qualifiedName?.asString() ?: continue
-                sourceEntries += SourceEntry(
-                    name, expression(declaration), tableName, ownerName,
-                    hierarchy(owner).keys, ancestors[ownerName] ?: Int.MAX_VALUE,
-                )
+                val ownerAncestors = hierarchy(owner).keys
+                for ((tableName, tableType) in tableTypes) {
+                    if (bounds.any { !it.isAssignableFrom(tableType) }) continue
+                    val sourceType = if (generic) declaration.asType(listOf(resolver.getTypeArgument(
+                        resolver.createKSTypeReferenceFromKSType(tableType), Variance.INVARIANT,
+                    ))) else declaration.asStarProjectedType()
+                    // Substitutes the concrete table through all generic superclass/interface chains.
+                    val recordType = recordsMethod.asMemberOf(sourceType).returnType
+                        ?.arguments?.singleOrNull()?.type?.resolve() ?: continue
+                    if (recordType.isError) {
+                        deferred += declaration
+                        continue
+                    }
+                    if (!recordType.isAssignableFrom(tableType)) continue
+                    val factory = factoryParameter(declaration, recordType)
+                    val recordDeclaration = recordType.declaration.let { if (it is KSTypeAlias) it.findActualType() else it }
+                    val exactTable = recordDeclaration.qualifiedName?.asString() == tableName
+                    if (factory == null && (generic || !exactTable || !canInstantiate(declaration))) continue
+                    sourceEntries += SourceEntry(
+                        name, declaration.classKind == ClassKind.OBJECT, needsDefaultArguments(declaration), tableName, ownerName,
+                        ownerAncestors, ancestors[ownerName] ?: Int.MAX_VALUE, generic, factory,
+                    )
+                }
             }
         }
         sources = sourceEntries.sortedBy { it.name }
@@ -126,23 +146,23 @@ class GeneratableProcessor(
             return
         }
 
-        val selectedSources = mutableMapOf<String, SourceEntry>()
+        val selectedSources = mutableMapOf<String, List<SourceEntry>>()
         for ((tableName, candidates) in sources.groupBy { it.table }) {
             val owners = candidates.groupBy { it.owner }
             val mostSpecific = owners.keys.filter { owner ->
                 candidates.none { other -> other.owner != owner && owner in other.ownerAncestors }
             }
-            if (mostSpecific.size != 1) {
-                logger.error("Ambiguous RecordsSource for $tableName: ${mostSpecific.joinToString()}")
-                return
+            // A subclass replaces its inherited implementation; independent sources are additive.
+            selectedSources[tableName] = mostSpecific.sorted().map { owner ->
+                owners.getValue(owner).minWith(compareBy<SourceEntry>({ it.distance }, { it.name }))
             }
-            selectedSources[tableName] = owners.getValue(mostSpecific.single())
-                .minWith(compareBy<SourceEntry>({ it.distance }, { it.name }))
         }
 
         for ((pack, packTables) in packs.toSortedMap()) {
             val suffix = suffixes.getValue(pack)
-            val packSources = packTables.mapNotNull { selectedSources[it.name] }
+            val packSources = packTables.flatMap { selectedSources[it.name].orEmpty() }
+            val aliases = importAliases(packTables.map { it.name } + packSources.map { it.name })
+            val needsAdapter = packTables.any { it.defaultArguments } || packSources.any { it.defaultArguments }
             codeGenerator.createNewFile(
                 Dependencies(aggregating = true, *inputs.toTypedArray()),
                 packageName, "PeacefulGeneratorInit$suffix",
@@ -151,18 +171,38 @@ class GeneratableProcessor(
                     writer.write("package ${escapedName(packageName)}\n\n")
                     writer.write("import org.darchest.insight.Table\n")
                     writer.write("import org.darchest.insight.generator.PeacefulGenerator\n")
-                    writer.write("import org.darchest.insight.generator.RecordsSource\n\n")
-                    writer.write("/** Replaces the configured tables and record sources with fresh instances. */\n")
+                    writer.write("import org.darchest.insight.generator.RecordsSource\n")
+                    aliases.forEach { (name, alias) ->
+                        writer.write("import ${escapedName(name)}")
+                        if (alias != name.substringAfterLast('.')) writer.write(" as ${escapedName(alias)}")
+                        writer.write("\n")
+                    }
+                    writer.write("\n/** Replaces the configured table and record-source constructors without creating instances. */\n")
                     writer.write("fun PeacefulGenerator.init$suffix(): PeacefulGenerator {\n")
-                    writer.write("    val initializedTables = listOf<Table>(\n")
-                    packTables.forEach { writer.write("        ${it.expression},\n") }
+                    writer.write("    val initializedTables = listOf<() -> Table>(\n")
+                    packTables.forEach { writer.write("        ${constructorReference(aliases.getValue(it.name), it.singleton, it.defaultArguments)},\n") }
                     writer.write("    )\n")
-                    writer.write("    val initializedSources = listOf<RecordsSource<*>>(\n")
-                    packSources.forEach { writer.write("        ${it.expression},\n") }
+                    writer.write("    val initializedSources = listOf<() -> RecordsSource<*>>(\n")
+                    packSources.forEach { source ->
+                        val reference = if (source.factoryParameter == null) {
+                            constructorReference(aliases.getValue(source.name), source.singleton, source.defaultArguments)
+                        } else {
+                            val table = packTables.single { it.name == source.table }
+                            val tableAlias = aliases.getValue(table.name)
+                            val typeArgument = if (source.generic) "<${escapedName(tableAlias)}>" else ""
+                            val tableFactory = constructorReference(tableAlias, table.singleton, table.defaultArguments)
+                            "{ ${escapedName(aliases.getValue(source.name))}$typeArgument(${escapedName(source.factoryParameter)} = $tableFactory) }"
+                        }
+                        writer.write("        $reference,\n")
+                    }
                     writer.write("    )\n")
                     writer.write("    tables.clear()\n    tables.addAll(initializedTables)\n")
                     writer.write("    recordsSources.clear()\n    recordsSources.addAll(initializedSources)\n")
                     writer.write("    return this\n}\n")
+                    if (needsAdapter) {
+                        // An exact return type lets Kotlin adapt constructor references with default arguments.
+                        writer.write("\nprivate fun <T> constructorWithDefaults(constructor: () -> T): () -> T = constructor\n")
+                    }
                 }
             }
             logger.info("Generated init$suffix: ${packTables.size} tables, ${packSources.size} record sources")
@@ -197,18 +237,41 @@ class GeneratableProcessor(
     }
 
     private fun canInstantiate(declaration: KSClassDeclaration): Boolean {
-        if (declaration.qualifiedName == null || declaration.typeParameters.isNotEmpty() ||
-            declaration.classKind !in setOf(ClassKind.CLASS, ClassKind.OBJECT) ||
-            Modifier.ABSTRACT in declaration.modifiers || Modifier.INNER in declaration.modifiers) return false
-        if (generateSequence<KSDeclaration>(declaration) { it.parentDeclaration }.any {
-                it.getVisibility() in setOf(Visibility.PRIVATE, Visibility.PROTECTED, Visibility.JAVA_PACKAGE)
-            }) return false
+        if (declaration.typeParameters.isNotEmpty() || !isAccessibleConcrete(declaration)) return false
         if (declaration.classKind == ClassKind.OBJECT) return true
         val constructors = declaration.getConstructors().toList()
         return constructors.isEmpty() || constructors.any { constructor ->
             constructor.getVisibility() !in setOf(Visibility.PRIVATE, Visibility.PROTECTED, Visibility.JAVA_PACKAGE) &&
                 constructor.parameters.all { it.hasDefault || it.isVararg }
         }
+    }
+
+    private fun isAccessibleConcrete(declaration: KSClassDeclaration): Boolean {
+        if (declaration.qualifiedName == null ||
+            declaration.classKind !in setOf(ClassKind.CLASS, ClassKind.OBJECT) ||
+            Modifier.ABSTRACT in declaration.modifiers || Modifier.INNER in declaration.modifiers) return false
+        if (generateSequence<KSDeclaration>(declaration) { it.parentDeclaration }.any {
+                it.getVisibility() in setOf(Visibility.PRIVATE, Visibility.PROTECTED, Visibility.JAVA_PACKAGE)
+            }) return false
+        return true
+    }
+
+    /** Templates accept one table constructor; all other constructor arguments must be optional. */
+    private fun factoryParameter(declaration: KSClassDeclaration, recordType: KSType): String? {
+        for (constructor in declaration.getConstructors()) {
+            if (constructor.getVisibility() in setOf(Visibility.PRIVATE, Visibility.PROTECTED, Visibility.JAVA_PACKAGE)) continue
+            for (parameter in constructor.parameters) {
+                if (parameter.isVararg) continue
+                val type = parameter.type.resolve()
+                if (type.declaration.qualifiedName?.asString() != "kotlin.Function0") continue
+                val result = type.arguments.singleOrNull()?.type?.resolve() ?: continue
+                val tableParameter = declaration.typeParameters.singleOrNull()
+                if (result.declaration != tableParameter && result.declaration != recordType.declaration) continue
+                if (constructor.parameters.any { it != parameter && !it.hasDefault && !it.isVararg }) continue
+                return parameter.name?.asString()
+            }
+        }
+        return null
     }
 
     private fun recordsOwner(declaration: KSClassDeclaration): KSClassDeclaration? {
@@ -229,17 +292,55 @@ class GeneratableProcessor(
             .firstNotNullOfOrNull { recordsOwner(it) }
     }
 
-    private fun expression(declaration: KSClassDeclaration): String =
-        escapedName(checkNotNull(declaration.qualifiedName).asString()) +
-            if (declaration.classKind == ClassKind.OBJECT) "" else "()"
+    private fun needsDefaultArguments(declaration: KSClassDeclaration): Boolean =
+        declaration.classKind != ClassKind.OBJECT && declaration.getConstructors().none {
+            it.parameters.isEmpty() && it.getVisibility() !in setOf(Visibility.PRIVATE, Visibility.PROTECTED, Visibility.JAVA_PACKAGE)
+        }
 
-    private fun escapedName(name: String): String = name.split('.').joinToString(".") { "`$it`" }
+    private fun constructorReference(alias: String, singleton: Boolean, defaultArguments: Boolean): String {
+        val name = escapedName(alias)
+        return when {
+            singleton -> "{ $name }"
+            defaultArguments -> "constructorWithDefaults<$name>(::$name)"
+            else -> "::$name"
+        }
+    }
+
+    private fun importAliases(names: List<String>): Map<String, String> {
+        val used = mutableSetOf("Table", "PeacefulGenerator", "RecordsSource", "constructorWithDefaults")
+        val aliases = linkedMapOf<String, String>()
+        val groups = names.distinct().sorted().groupBy { it.substringAfterLast('.') }
+        // Reserve unambiguous names before assigning aliases to duplicate simple names.
+        groups.filter { it.value.size == 1 && it.key !in used }.forEach { (simple, qualified) ->
+            aliases[qualified.single()] = simple
+            used += simple
+        }
+        groups.forEach { (simple, qualifiedNames) ->
+            qualifiedNames.filter { it !in aliases }.forEach { qualified ->
+                var number = 1
+                var alias = "${simple}_${number}"
+                while (alias in used) alias = "${simple}_${++number}"
+                aliases[qualified] = alias
+                used += alias
+            }
+        }
+        return aliases.toSortedMap()
+    }
+
+    private fun escapedName(name: String): String = name.split('.').joinToString(".") {
+        if (it.matches(Regex("[\\p{L}_][\\p{L}\\p{N}_]*")) && it !in KEYWORDS && !it.all { char -> char == '_' }) it else "`$it`"
+    }
 
     internal companion object {
         const val PACKAGE_OPTION = "org.darchest.insight.generator.package"
         private const val GENERATABLE = "org.darchest.insight.generator.Generatable"
         private const val TABLE = "org.darchest.insight.Table"
         private const val RECORDS_SOURCE = "org.darchest.insight.generator.RecordsSource"
+        private val KEYWORDS = setOf(
+            "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in", "interface",
+            "is", "null", "object", "package", "return", "super", "this", "throw", "true", "try", "typealias",
+            "typeof", "val", "var", "when", "while", "_",
+        )
 
         fun packSuffix(pack: String): String = pack.split(Regex("[^\\p{L}\\p{N}]+"))
             .filter { it.isNotEmpty() }.joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }

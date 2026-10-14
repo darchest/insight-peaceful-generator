@@ -1,0 +1,7 @@
+package fixture.right
+
+import fixture.FixtureTable
+import org.darchest.insight.generator.Generatable
+
+@Generatable("aliases")
+class SameTable : FixtureTable("right")
