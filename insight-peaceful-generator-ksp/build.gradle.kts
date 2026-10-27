@@ -14,6 +14,7 @@ repositories {
 
 dependencies {
     implementation("com.google.devtools.ksp:symbol-processing-api:2.0.10-1.0.24")
+    compileOnly(project(":"))
 
     testImplementation(project(":"))
     testImplementation("org.darchest:insight:1.0-SNAPSHOT")

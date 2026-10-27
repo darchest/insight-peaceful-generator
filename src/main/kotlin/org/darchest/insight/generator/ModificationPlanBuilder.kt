@@ -26,6 +26,7 @@ class ModificationPlanBuilder {
         target: SchemaDescriptor,
     ) {
         target.tables
+            .filter { it.actions and Generatable.CREATE_TABLE != 0 }
             .sortedBy { it.name }
             .filter { it.name !in currentTables }
             .forEach { table ->
@@ -45,6 +46,7 @@ class ModificationPlanBuilder {
         target: SchemaDescriptor,
     ) {
         target.tables
+            .filter { it.actions and Generatable.ADD_COLUMN != 0 }
             .sortedBy { it.name }
             .forEach { targetTable ->
                 val currentTable = currentTables[targetTable.name] ?: return@forEach
@@ -71,6 +73,7 @@ class ModificationPlanBuilder {
         target: SchemaDescriptor,
     ) {
         target.tables
+            .filter { it.actions and Generatable.ALTER_COLUMN_SIZE != 0 }
             .sortedBy { it.name }
             .forEach { targetTable ->
                 val currentTable = currentTables[targetTable.name] ?: return@forEach
@@ -108,6 +111,7 @@ class ModificationPlanBuilder {
         target: SchemaDescriptor,
     ) {
         target.tables
+            .filter { it.actions and Generatable.ADD_INDEX != 0 }
             .sortedBy { it.name }
             .forEach { targetTable ->
                 val currentIndexNames = currentTables[targetTable.name]
@@ -137,6 +141,7 @@ class ModificationPlanBuilder {
         target: SchemaDescriptor,
     ) {
         target.tables
+            .filter { it.actions and Generatable.ADD_FOREIGN_KEY != 0 }
             .sortedBy { it.name }
             .forEach { targetTable ->
                 val currentForeignKeys = currentTables[targetTable.name]?.foreignKeys ?: emptyList()

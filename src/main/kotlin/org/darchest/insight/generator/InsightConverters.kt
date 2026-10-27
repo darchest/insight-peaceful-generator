@@ -93,6 +93,7 @@ suspend fun Table.toDescriptor(vendor: Vendor = this.vendor()): TableDescriptor 
         indexes = indexes().map { it.toDescriptor(vendor) } + uniqueIndexes,
         primaryKey = constraints.filterIsInstance<PrimaryKey>().firstOrNull()?.toDescriptor(),
         foreignKeys = constraints.filterIsInstance<ForeignKey<*>>().map { it.toDescriptor() },
+        actions = generationActions(),
     )
 }
 

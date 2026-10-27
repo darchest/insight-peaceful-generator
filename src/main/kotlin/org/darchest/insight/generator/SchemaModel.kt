@@ -16,6 +16,7 @@ data class TableDescriptor(
     val indexes: List<IndexDescriptor>,
     val primaryKey: PrimaryKeyDescriptor?,
     val foreignKeys: List<ForeignKeyDescriptor>,
+    val actions: Int = Generatable.ALL,
 )
 
 data class ColumnDescriptor(

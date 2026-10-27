@@ -9,10 +9,18 @@ import org.darchest.insight.impl.select
 import java.sql.Connection
 
 internal object RecordsGenerator {
-    suspend fun generate(conn: Connection, sources: List<RecordsSource<*>>, vendor: Vendor) =
+    suspend fun generate(
+        conn: Connection,
+        sources: List<RecordsSource<*>>,
+        vendor: Vendor,
+        actionsForTable: (Table) -> Int = { it.generationActions() },
+    ) =
         withContext(ConnectionManager.localConnection.asContextElement(conn)) {
             for (source in sources) {
-                for (record in source.records()) upsert(conn, source.tableFactory(), record, vendor)
+                for (record in source.records()) {
+                    if (actionsForTable(record) and Generatable.RECORDS == 0) continue
+                    upsert(conn, source.tableFactory(), record, vendor)
+                }
             }
         }
 

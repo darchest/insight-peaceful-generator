@@ -29,6 +29,25 @@ Import `my.application.generated.initDefault`. The default generated package is
 `org.darchest.insight.generator.generated`; use a distinct package for each application/module.
 
 Each directly annotated `@Generatable` table belongs to its `genPack` (default: `"default"`).
+Its `actions` argument is a bit mask, defaulting to `Generatable.ALL`. Available flags are
+`CREATE_TABLE`, `ADD_COLUMN`, `ALTER_COLUMN_SIZE`, `ADD_INDEX`, `ADD_FOREIGN_KEY`, and `RECORDS`;
+`SCHEMA` combines all schema flags. Combine flags with `or`, for example:
+
+```kotlin
+@Generatable(actions = Generatable.CREATE_TABLE or Generatable.ADD_COLUMN)
+class MyTable : MyBaseTable("my_table")
+
+@Generatable(actions = 0)
+class LegacyTable : MyBaseTable("legacy_table")
+```
+
+Tables with `actions = 0` remain in `generator.tables` for consumers such as access
+synchronization. Generation skips their schema descriptions, DDL, and seed records.
+The initializer omits record-source constructors for tables without the `RECORDS` flag.
+A pack containing only disabled tables needs no database connection. `RECORDS` alone seeds
+existing tables; `SCHEMA` alone manages their structure without seeding them. The same masks
+apply to explicit `TableDescriptor.actions` in the descriptor-based generation overload.
+
 The processor generates one extension per pack: `"default"` → `initDefault()`,
 `"generation-test"` → `initGenerationTest()`. Names producing the same function are rejected.
 Tables must be accessible concrete classes with a callable no-argument constructor, or objects.
