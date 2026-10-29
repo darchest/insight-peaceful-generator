@@ -47,3 +47,7 @@ publishing {
         }
     }
 }
+
+tasks.named("publishMavenJavaPublicationToDarchestRepository") {
+    dependsOn(":insight-peaceful-generator-ksp:publishMavenJavaPublicationToDarchestRepository")
+}

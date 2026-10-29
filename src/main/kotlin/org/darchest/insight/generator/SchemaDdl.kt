@@ -53,9 +53,9 @@ object SchemaDdl {
 
     fun addForeignKeySql(tableName: String, foreignKey: ForeignKeyDescriptor): String {
         val builder = StringBuilder()
-        builder.append("ALTER TABLE \"", tableName, "\" ADD ")
+        builder.append("ALTER TABLE ", quoteIdentifier(tableName), " ADD ")
         foreignKey.name?.let { name ->
-            builder.append("CONSTRAINT \"", name, "\" ")
+            builder.append("CONSTRAINT ", quoteIdentifier(name), " ")
         }
         appendForeignKey(builder, foreignKey)
         return builder.toString()
@@ -76,7 +76,7 @@ object SchemaDdl {
         builder.append(
             primaryKey.columns
                 .sortedBy { it.sequence }
-                .joinToString(", ") { it.name }
+                .joinToString(", ") { quoteIdentifier(it.name) }
         )
         builder.append(")")
     }
@@ -86,17 +86,19 @@ object SchemaDdl {
         builder.append(
             foreignKey.columns
                 .sortedBy { it.sequence }
-                .joinToString(", ") { it.column }
+                .joinToString(", ") { quoteIdentifier(it.column) }
         )
         builder.append(") REFERENCES ")
-        foreignKey.referencedSchema?.apply { builder.append(this, ".") }
-        builder.append(foreignKey.referencedTable)
+        foreignKey.referencedSchema?.let { builder.append(quoteIdentifier(it), ".") }
+        builder.append(quoteIdentifier(foreignKey.referencedTable))
         builder.append(" (")
         builder.append(
             foreignKey.columns
                 .sortedBy { it.sequence }
-                .joinToString(", ") { it.referencedColumn }
+                .joinToString(", ") { quoteIdentifier(it.referencedColumn) }
         )
         builder.append(")")
     }
+
+    private fun quoteIdentifier(name: String): String = "\"${name.replace("\"", "\"\"")}\""
 }

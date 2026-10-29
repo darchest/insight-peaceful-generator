@@ -61,6 +61,36 @@ class GenerationActionsTest {
     }
 
     @Test
+    fun `foreign key SQL quotes mixed case, spaces, and embedded quotes in identifiers`() {
+        val foreignKey = ForeignKeyDescriptor(
+            name = "fk\"name",
+            columns = listOf(
+                ForeignKeyColumnDescriptor("Other Column", "OtherId", 2),
+                ForeignKeyColumnDescriptor("LocalId", "RecordId", 1),
+            ),
+            referencedSchema = "Schema Name",
+            referencedTable = "Пикеты",
+            onUpdateRule = 3,
+            onDeleteRule = 3,
+        )
+        assertEquals(
+            "ALTER TABLE \"Ground Cards\" ADD CONSTRAINT \"fk\"\"name\" FOREIGN KEY (\"LocalId\", \"Other Column\") REFERENCES \"Schema Name\".\"Пикеты\" (\"RecordId\", \"OtherId\")",
+            SchemaDdl.addForeignKeySql("Ground Cards", foreignKey),
+        )
+        assertEquals(
+            "ALTER TABLE \"Ground Cards\" ADD FOREIGN KEY (\"LocalId\", \"Other Column\") REFERENCES \"Пикеты\" (\"RecordId\", \"OtherId\")",
+            SchemaDdl.addForeignKeySql("Ground Cards", foreignKey.copy(name = null, referencedSchema = null)),
+        )
+    }
+
+    @Test
+    fun `create table SQL quotes primary key columns`() {
+        val pk = PrimaryKeyDescriptor(null, listOf(KeyColumnDescriptor("RecordId", 1)))
+        val ddl = SchemaDdl.createTableSql(table.copy(columns = listOf(column.copy(name = "RecordId")), primaryKey = pk))
+        assertTrue(ddl.contains("PRIMARY KEY (\"RecordId\")"), ddl)
+    }
+
+    @Test
     fun `catalog-only pack retains tables and skips connection and record-source initialization`() = runBlocking {
         val generator = PeacefulGenerator()
         generator.tables += ::CatalogOnlyTable
